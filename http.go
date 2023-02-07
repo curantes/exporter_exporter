@@ -14,21 +14,15 @@
 package main
 
 import (
-	"bytes"
-	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 
-	dto "github.com/prometheus/client_model/go"
-	"github.com/prometheus/common/expfmt"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -39,14 +33,6 @@ const (
 		"Response from proxied server failed verification. " +
 		"See server logs for details"
 )
-
-type VerifyError struct {
-	msg   string
-	cause error
-}
-
-func (e *VerifyError) Error() string { return e.msg + ": " + e.cause.Error() }
-func (e *VerifyError) Unwrap() error { return e.cause }
 
 func (cfg moduleConfig) getReverseProxyDirectorFunc() (func(*http.Request), error) {
 	base, err := url.Parse(cfg.HTTP.Path)
@@ -80,62 +66,8 @@ func (cfg moduleConfig) getReverseProxyDirectorFunc() (func(*http.Request), erro
 	}, nil
 }
 
-func (cfg moduleConfig) getReverseProxyModifyResponseFunc() func(*http.Response) error {
-	return func(resp *http.Response) error {
-		if resp.StatusCode != 200 {
-			return nil
-		}
-
-		var (
-			err     error
-			body    bytes.Buffer
-			oldBody = resp.Body
-		)
-		defer oldBody.Close()
-
-		if _, err = body.ReadFrom(oldBody); err != nil {
-			return &VerifyError{"Failed to read body from proxied server", err}
-		}
-
-		resp.Body = ioutil.NopCloser(bytes.NewReader(body.Bytes()))
-
-		var bodyReader io.ReadCloser
-		if resp.Header.Get("Content-Encoding") == "gzip" {
-			bodyReader, err = gzip.NewReader(bytes.NewReader(body.Bytes()))
-			if err != nil {
-				return &VerifyError{"Failed to decode gzipped response", err}
-			}
-		} else {
-			bodyReader = ioutil.NopCloser(bytes.NewReader(body.Bytes()))
-		}
-		defer bodyReader.Close()
-
-		dec := expfmt.NewDecoder(bodyReader, expfmt.ResponseFormat(resp.Header))
-		for {
-			mf := dto.MetricFamily{}
-			err := dec.Decode(&mf)
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				proxyMalformedCount.WithLabelValues(cfg.name).Inc()
-				return &VerifyError{"Failed to decode metrics from proxied server", err}
-			}
-		}
-
-		return nil
-	}
-}
-
 func (cfg moduleConfig) getReverseProxyErrorHandlerFunc() func(http.ResponseWriter, *http.Request, error) {
-	return func(w http.ResponseWriter, r *http.Request, err error) {
-		var verifyError *VerifyError
-		if errors.As(err, &verifyError) {
-			log.Errorf("Verification for module '%s' failed: %v", cfg.name, err)
-			http.Error(w, VerificationErrorMsg, http.StatusInternalServerError)
-			return
-		}
-
+	return func(w http.ResponseWriter, _ *http.Request, err error) {
 		if errors.Is(err, context.DeadlineExceeded) {
 			log.Errorf("Request time out for module '%s'", cfg.name)
 			http.Error(w, http.StatusText(http.StatusGatewayTimeout), http.StatusGatewayTimeout)

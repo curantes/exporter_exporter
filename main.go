@@ -32,6 +32,8 @@ import (
 	"strings"
 	"time"
 
+	_ "net/http/pprof"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	log "github.com/sirupsen/logrus"
@@ -124,18 +126,17 @@ func setup() (*config, error) {
 		if err != nil {
 			return nil, err
 		}
-		for mn, _ := range cfg.GetModules() {
+		for mn := range cfg.GetModules() {
 			log.Debugf("read module config '%s' from: %s", mn, *cfgFile)
 		}
 	}
 
-cfgDirs:
 	for _, cfgDir := range cfgDirs {
 		mfs, err := ioutil.ReadDir(cfgDir)
 		if err != nil {
 			if *skipDirs && os.IsNotExist(err) {
 				log.Warnf("skipping non existent config.dirs entry '%s'", cfgDir)
-				continue cfgDirs
+				continue
 			}
 			return nil, fmt.Errorf("failed reading directory: %s, %v", cfgDir, err)
 		}
@@ -252,7 +253,7 @@ func setupTLS() (*tls.Config, error) {
 
 	cert, err := tls.LoadX509KeyPair(*certPath, *keyPath)
 	if err != nil {
-		return nil, fmt.Errorf("Could not parse key/cert, %w", err)
+		return nil, fmt.Errorf("could not parse key/cert, %w", err)
 	}
 
 	tlsConfig = &tls.Config{
@@ -273,11 +274,11 @@ func setupTLS() (*tls.Config, error) {
 		pool := x509.NewCertPool()
 		cabs, err := ioutil.ReadFile(*caPath)
 		if err != nil {
-			return nil, fmt.Errorf("Could not open ca file, %w", err)
+			return nil, fmt.Errorf("could not open ca file, %w", err)
 		}
 		ok := pool.AppendCertsFromPEM(cabs)
 		if !ok {
-			return nil, errors.New("Failed loading ca certs")
+			return nil, errors.New("failed loading ca certs")
 		}
 		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
 		tlsConfig.ClientCAs = pool
@@ -430,7 +431,7 @@ func (middleware AccessLogMiddleware) ServeHTTP(w http.ResponseWriter, r *http.R
 		log.Infof(
 			"%s - %s \"%s\" %d %s (took %s)",
 			remoteHost, r.Method, r.URL.RequestURI(), statusWriter.status,
-			http.StatusText(statusWriter.status), time.Now().Sub(start),
+			http.StatusText(statusWriter.status), time.Since(start),
 		)
 	}()
 	middleware.Handler.ServeHTTP(statusWriter, r)
@@ -493,15 +494,12 @@ func (m moduleConfig) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	nr := r
-	cancel := func() {}
 	if m.Timeout != 0 {
 		log.Debugf("setting module %v timeout to %v", m.name, m.Timeout)
-
-		var ctx context.Context
-		ctx, cancel = context.WithTimeout(r.Context(), m.Timeout)
+		ctx, cancel := context.WithTimeout(r.Context(), m.Timeout)
+		defer cancel()
 		nr = r.WithContext(ctx)
 	}
-	defer cancel()
 
 	switch m.Method {
 	case "exec":

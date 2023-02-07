@@ -1,0 +1,11 @@
+modules:
+  prometheus:
+    method: http
+    http:
+       port: 9090
+       address: prometheus-k8s.monitoring.svc.cluster.local.
+  alertmanager:
+    method: http
+    http:
+       port: 9093
+       address: alertmanager-main.monitoring.svc.cluster.local.

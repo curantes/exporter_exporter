@@ -26,13 +26,11 @@ func BenchmarkReverseProxyHandler(b *testing.B) {
 	defer test_exporter.Close()
 
 	URL, _ := url.Parse(test_exporter.URL)
-	verify := true
 	port, _ := strconv.ParseInt(URL.Port(), 0, 0)
 	modCfg := &moduleConfig{
 		Method:  "http",
 		Timeout: 5 * time.Second,
 		HTTP: httpConfig{
-			Verify:  &verify,
 			Scheme:  URL.Scheme,
 			Address: URL.Hostname(),
 			Port:    int(port),
