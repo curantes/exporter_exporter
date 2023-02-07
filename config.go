@@ -37,7 +37,7 @@ type config struct {
 	proxyPath     string
 	telemetryPath string
 
-	mutex sync.Mutex
+	mutex sync.RWMutex
 }
 
 func newConfig() *config {
@@ -53,17 +53,17 @@ func newConfig() *config {
 func (cfg *config) GetModules() map[string]*moduleConfig {
 	mods := make(map[string]*moduleConfig)
 
-	cfg.mutex.Lock()
+	cfg.mutex.RLock()
 	for k, v := range cfg.Modules {
 		mods[k] = v
 	}
-	cfg.mutex.Unlock()
+	cfg.mutex.RUnlock()
 	return mods
 }
 
 func (cfg *config) getModule(name string) *moduleConfig {
-	cfg.mutex.Lock()
-	defer cfg.mutex.Unlock()
+	cfg.mutex.RLock()
+	defer cfg.mutex.RUnlock()
 	if m, ok := cfg.Modules[name]; ok {
 		return m
 	}
@@ -96,13 +96,11 @@ type discoveryConfig struct {
 }
 
 type exporter struct {
-	Port   int    `yaml:"port"`
-	Path   string `yaml:"path"`
-	Verify *bool  `yaml:"verify"`
+	Port int    `yaml:"port"`
+	Path string `yaml:"path"`
 }
 
 type httpConfig struct {
-	Verify                *bool                  `yaml:"verify"`                   // no default
 	TLSInsecureSkipVerify bool                   `yaml:"tls_insecure_skip_verify"` // false
 	TLSCertFile           *string                `yaml:"tls_cert_file"`            // no default
 	TLSKeyFile            *string                `yaml:"tls_key_file"`             // no default
@@ -133,13 +131,16 @@ type execConfig struct {
 func readConfig(r io.Reader) (*config, error) {
 	cfg := config{}
 	err := yaml.NewDecoder(r).Decode(&cfg)
+	if err != nil {
+		return nil, err
+	}
 
 	if len(cfg.XXX) != 0 {
-		return nil, fmt.Errorf("Unknown configuration fields: %v", cfg.XXX)
+		return nil, fmt.Errorf("unknown configuration fields: %v", cfg.XXX)
 	}
 
 	for s := range cfg.Modules {
-		if err := checkModuleConfig(s, cfg.Modules[s]); err != nil {
+		if err = checkModuleConfig(s, cfg.Modules[s]); err != nil {
 			return nil, fmt.Errorf("bad config for module %s, %w", s, err)
 		}
 	}
@@ -171,16 +172,13 @@ func checkModuleConfig(name string, cfg *moduleConfig) error {
 	switch cfg.Method {
 	case "http":
 		if len(cfg.HTTP.XXX) != 0 {
-			return fmt.Errorf("Unknown http module configuration fields: %v", cfg.HTTP.XXX)
+			return fmt.Errorf("unknown http module configuration fields: %v", cfg.HTTP.XXX)
 		}
 
 		if cfg.HTTP.Port == 0 {
 			return fmt.Errorf("module %v must have a non-zero port set", name)
 		}
-		if cfg.HTTP.Verify == nil {
-			v := true
-			cfg.HTTP.Verify = &v
-		}
+
 		if cfg.HTTP.Scheme == "" {
 			cfg.HTTP.Scheme = "http"
 		}
@@ -207,15 +205,12 @@ func checkModuleConfig(name string, cfg *moduleConfig) error {
 			Director:     dirFunc,
 			ErrorHandler: cfg.getReverseProxyErrorHandlerFunc(),
 		}
-		if *cfg.HTTP.Verify {
-			cfg.HTTP.ReverseProxy.ModifyResponse = cfg.getReverseProxyModifyResponseFunc()
-		}
 	case "exec":
 		if len(cfg.Exec.XXX) != 0 {
-			return fmt.Errorf("Unknown exec module configuration fields: %v", cfg.Exec.XXX)
+			return fmt.Errorf("unknown exec module configuration fields: %v", cfg.Exec.XXX)
 		}
 	default:
-		return fmt.Errorf("Unknown module method: %v", cfg.Method)
+		return fmt.Errorf("unknown module method: %v", cfg.Method)
 	}
 
 	return nil
